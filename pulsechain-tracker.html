@@ -347,21 +347,37 @@ async function doTrack() {
   setProgress(5,'Fetching token list...');
 
   try {
-    var tokRes = await fetch(BSCOUT+'/addresses/'+wallet+'/tokens?type=ERC-20');
-    if (!tokRes.ok) throw new Error('Blockscout error '+tokRes.status);
-    var tokData = await tokRes.json();
+    // Run all three fetches in parallel with timeouts
+    function fetchWithTimeout(url, ms) {
+      return new Promise(function(resolve) {
+        var done = false;
+        var timer = setTimeout(function() {
+          if (!done) { done=true; resolve({ok:false, json:function(){return Promise.resolve({items:[]});}}); }
+        }, ms);
+        fetch(url).then(function(r) {
+          if (!done) { done=true; clearTimeout(timer); resolve(r); }
+        }).catch(function() {
+          if (!done) { done=true; clearTimeout(timer); resolve({ok:false, json:function(){return Promise.resolve({items:[]});}}); }
+        });
+      });
+    }
+
+    var results = await Promise.all([
+      fetchWithTimeout(BSCOUT+'/addresses/'+wallet+'/tokens?type=ERC-20', 15000),
+      fetchWithTimeout(BSCOUT+'/addresses/'+wallet+'/transactions?limit=30', 10000),
+      fetchWithTimeout(BSCOUT+'/addresses/'+wallet+'/token-transfers?limit=20', 10000),
+    ]);
+
+    if (!results[0].ok) throw new Error('Could not fetch token list. Please try again.');
+    var tokData = await results[0].json();
+    var txData = results[1].ok ? await results[1].json() : {items:[]};
+    var tokTxData = results[2].ok ? await results[2].json() : {items:[]};
     var allToks = tokData.items||[];
 
     setProgress(20,'Processing '+allToks.length+' tokens...');
 
     var lpToks  = allToks.filter(function(t){return isLP(t.token&&t.token.name||'',t.token&&t.token.symbol||'');});
     var regToks = allToks.filter(function(t){return !isLP(t.token&&t.token.name||'',t.token&&t.token.symbol||'')&&!isSpam(t.token||{});});
-
-    // Fetch transactions
-    var txRes = await fetch(BSCOUT+'/addresses/'+wallet+'/transactions?limit=30');
-    var txData = txRes.ok ? await txRes.json() : {items:[]};
-    var tokTxRes = await fetch(BSCOUT+'/addresses/'+wallet+'/token-transfers?limit=20');
-    var tokTxData = tokTxRes.ok ? await tokTxRes.json() : {items:[]};
 
     setProgress(35,'Fetching prices...');
     var tAddrs = regToks.map(function(t){return t.token&&t.token.address;}).filter(Boolean);
