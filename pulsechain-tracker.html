@@ -213,6 +213,8 @@
 </footer>
 
 <script>
+(function() {
+'use strict';
 // ── Config ────────────────────────────────────────────────────────────────────
 // Universal timeout helper — works in all browsers including older ones
 function withTimeout(ms) {
@@ -639,6 +641,12 @@ function toggleLP(idx) {
 }
 
 document.getElementById('wallet').addEventListener('keydown',e=>{if(e.key==='Enter')track();});
+
+// Expose functions needed by HTML onclick handlers
+window.track      = track;
+window.switchTab  = switchTab;
+window.toggleLP   = toggleLP;
+})();
 </script>
 </body>
 </html>
