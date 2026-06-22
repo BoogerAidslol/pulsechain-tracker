@@ -94,6 +94,8 @@ main{max-width:840px;margin:0 auto;padding:0 20px;}
 .p-icon:nth-child(2){margin-left:-7px;}
 .lp-pair{font-size:13px;font-weight:600;}
 .lp-dex{font-size:10px;color:var(--muted);font-family:'Courier New',Courier,monospace;margin-top:1px;}
+.lp-amounts{font-size:11px;color:var(--sub);margin-top:3px;font-family:'Courier New',Courier,monospace;}
+.lp-sym{color:var(--pulse);font-weight:600;}
 .lp-right{display:flex;align-items:center;gap:10px;flex-shrink:0;}
 .lp-val{font-size:14px;font-weight:700;font-family:'Courier New',Courier,monospace;}
 .il-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;font-family:'Courier New',Courier,monospace;}
@@ -174,6 +176,27 @@ var DEXSCR = 'https://api.dexscreener.com/latest/dex/tokens/';
 
 // WPLS address - use this to get PLS price since native PLS has no pair
 var WPLS = '0xa1077a294dde1b09bb078844df40758a5d0f9a27';
+
+// Fetch WPLS price directly at startup
+async function fetchWPLSPrice() {
+  try {
+    var r = await fetch('https://api.dexscreener.com/latest/dex/tokens/0xa1077a294dde1b09bb078844df40758a5d0f9a27');
+    var j = await r.json();
+    var pairs = (j.pairs||[]).filter(function(p){return p.chainId==='pulsechain';});
+    // Sort by liquidity to get most reliable price
+    pairs.sort(function(a,b){return parseFloat(b.liquidity&&b.liquidity.usd||0)-parseFloat(a.liquidity&&a.liquidity.usd||0);});
+    if (pairs.length>0) {
+      var price = parseFloat(pairs[0].priceUsd||0);
+      if (price>0) {
+        priceCache[WPLS] = price;
+        priceCache['pls'] = price;
+        console.log('WPLS price fetched: $'+price);
+        return price;
+      }
+    }
+  } catch(e) { console.log('WPLS price fetch failed:', e.message); }
+  return 0;
+}
 
 var LP_PATTERNS = [
   {re:/^PLP$/,                        label:'PulseX LP'},
@@ -351,6 +374,8 @@ async function doTrack() {
   var btn = document.getElementById('track-btn');
   btn.disabled = true; btn.textContent = '⏳ Loading...';
   Object.keys(priceCache).forEach(function(k){delete priceCache[k];});
+  // Pre-fetch WPLS price so PLS pairs always have correct price
+  await fetchWPLSPrice();
 
   document.getElementById('tabs').style.display = 'flex';
   document.getElementById('wbar').classList.add('show');
@@ -493,7 +518,7 @@ function renderLP(positions) {
       var ilCol=p.il>5?'#EF4444':p.il>2?'#F59E0B':'#22C55E';
       var ilDl=p.il>5?'red':p.il>2?'amber':'green';
       var shareStr=p.share<0.00001?'<0.001%':(p.share*100).toFixed(4)+'%';
-      html+='<div class="lp-card"><div class="lp-head" onclick="toggleLP('+idx+')"><div class="lp-left"><div class="pair-icons"><div class="p-icon">'+p.sym0.slice(0,3)+'</div><div class="p-icon">'+p.sym1.slice(0,3)+'</div></div><div><div class="lp-pair">'+p.sym0+' / '+p.sym1+'</div><div class="lp-dex">'+p.dex+'</div></div></div><div class="lp-right"><div class="lp-val">'+fmt(p.total)+'</div><span class="il-badge '+ilC+'">IL ~'+p.il.toFixed(1)+'%</span><span class="chev" id="lchev-'+idx+'">▼</span></div></div>';
+      html+='<div class="lp-card"><div class="lp-head" onclick="toggleLP('+idx+')"><div class="lp-left"><div class="pair-icons"><div class="p-icon">'+p.sym0.slice(0,3)+'</div><div class="p-icon">'+p.sym1.slice(0,3)+'</div></div><div><div class="lp-pair">'+p.sym0+' / '+p.sym1+'</div><div class="lp-dex">'+p.dex+' &nbsp;·&nbsp; '+fmtN(p.lpBal)+' PLP</div><div class="lp-amounts">'+fmtN(p.amt0)+' <span class="lp-sym">'+p.sym0+'</span> + '+fmtN(p.amt1)+' <span class="lp-sym">'+p.sym1+'</span></div></div></div><div class="lp-right"><div class="lp-val">'+fmt(p.total)+'</div><span class="il-badge '+ilC+'">IL ~'+p.il.toFixed(1)+'%</span><span class="chev" id="lchev-'+idx+'">▼</span></div></div>';
       html+='<div class="lp-body" id="lbody-'+idx+'"><div class="dgrid"><div><div class="dl-lbl">'+p.sym0+' amount</div><div class="dl-val">'+fmtN(p.amt0)+'</div></div><div><div class="dl-lbl">'+p.sym1+' amount</div><div class="dl-val">'+fmtN(p.amt1)+'</div></div><div><div class="dl-lbl">'+p.sym0+' value</div><div class="dl-val">'+fmt(p.val0)+'</div></div><div><div class="dl-lbl">'+p.sym1+' value</div><div class="dl-val">'+fmt(p.val1)+'</div></div><div><div class="dl-lbl">Pool share</div><div class="dl-val">'+shareStr+'</div></div><div><div class="dl-lbl">Est. IL</div><div class="dl-val '+ilDl+'">'+p.il.toFixed(2)+'%</div></div><div><div class="dl-lbl">'+p.sym0+' price</div><div class="dl-val">'+(p.p0>0?fmt(p.p0):'—')+'</div></div><div><div class="dl-lbl">'+p.sym1+' price</div><div class="dl-val">'+(p.p1>0?fmt(p.p1):'—')+'</div></div></div><div class="il-bar-bg"><div class="il-bar-fill" style="width:'+Math.min(p.il*5,100)+'%;background:'+ilCol+';"></div></div><a class="scan-link" href="https://scan.pulsechain.com/address/'+p.pairAddr+'" target="_blank">View pool on PulseScan ↗</a></div></div>';
     });
   });
