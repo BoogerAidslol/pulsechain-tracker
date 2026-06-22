@@ -172,6 +172,9 @@ var RPC    = 'https://rpc.pulsechain.com';
 var BSCOUT = 'https://api.scan.pulsechain.com/api/v2';
 var DEXSCR = 'https://api.dexscreener.com/latest/dex/tokens/';
 
+// WPLS address - use this to get PLS price since native PLS has no pair
+var WPLS = '0xa1077a294dde1b09bb078844df40758a5d0f9a27';
+
 var LP_PATTERNS = [
   {re:/^PLP$/,                        label:'PulseX LP'},
   {re:/PulseX LP|PulseXPair/i,        label:'PulseX LP'},
@@ -274,6 +277,8 @@ async function fetchPrices(addrs) {
   var needed = addrs.map(function(a){return a.toLowerCase();}).filter(function(a,i,arr){
     return arr.indexOf(a)===i && priceCache[a]===undefined;
   });
+  // Always include WPLS so we have PLS price
+  if (needed.indexOf(WPLS)===-1 && priceCache[WPLS]===undefined) needed.push(WPLS);
   if (!needed.length) return;
   for (var i=0;i<needed.length;i+=30) {
     var chunk = needed.slice(i,i+30);
@@ -288,6 +293,8 @@ async function fetchPrices(addrs) {
         if (chunk.indexOf(ba)>-1&&usd>0) priceCache[ba]=usd;
         if (chunk.indexOf(qa)>-1&&usd>0&&parseFloat(p.priceNative||0)>0) priceCache[qa]=usd/parseFloat(p.priceNative);
       });
+      // Copy WPLS price to any native PLS lookups
+      if (priceCache[WPLS]>0) priceCache['pls']=priceCache[WPLS];
     } catch(e) { chunk.forEach(function(a){priceCache[a]=0;}); }
   }
 }
@@ -312,10 +319,19 @@ async function readPair(pairAddr, lpRaw) {
   ]);
   var dec0=decodeUint(tok[0])||18, dec1=decodeUint(tok[1])||18;
   var sym0=decodeSymbol(tok[2]), sym1=decodeSymbol(tok[3]);
-  await fetchPrices([t0,t1]);
+  // Map WPLS address for native PLS token pricing
+  var p0addr = t0.toLowerCase();
+  var p1addr = t1.toLowerCase();
+  if (p0addr === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' || p0addr === '0x0000000000000000000000000000000000000000') p0addr = WPLS;
+  if (p1addr === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' || p1addr === '0x0000000000000000000000000000000000000000') p1addr = WPLS;
+  await fetchPrices([p0addr, p1addr]);
   var share=lpRaw/supply;
   var amt0=(res0/Math.pow(10,dec0))*share, amt1=(res1/Math.pow(10,dec1))*share;
-  var p0=priceCache[t0.toLowerCase()]||0, p1=priceCache[t1.toLowerCase()]||0;
+  var p0=priceCache[p0addr]||priceCache[t0.toLowerCase()]||priceCache[WPLS]||0;
+  var p1=priceCache[p1addr]||priceCache[t1.toLowerCase()]||0;
+  // If one token is WPLS/PLS, use WPLS price
+  if (t0.toLowerCase()===WPLS||sym0==='WPLS'||sym0==='PLS') p0=priceCache[WPLS]||0;
+  if (t1.toLowerCase()===WPLS||sym1==='WPLS'||sym1==='PLS') p1=priceCache[WPLS]||0;
   var val0=amt0*p0, val1=amt1*p1, total=val0+val1;
   var il=0;
   if (total>0&&p0>0&&p1>0) {
