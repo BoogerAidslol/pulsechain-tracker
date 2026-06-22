@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PulseChain Tracker</title>
 <style>
@@ -216,7 +217,7 @@
 // Universal timeout helper — works in all browsers including older ones
 function withTimeout(ms) {
   const ctrl = new AbortController();
-  setTimeout(() => ctrl.abort(), ms);
+  setTimeout(() => ctrl.abort(new Error('Request timed out after '+ms+'ms')), ms);
   return ctrl.signal;
 }
 const RPC    = 'https://rpc.pulsechain.com';
@@ -286,7 +287,7 @@ async function ethCall(to, data) {
   try {
     const r = await fetch(RPC,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_call',params:[{to,data},'latest']}),
-      signal:withTimeout(12000)});
+      signal:withTimeout(20000)});
     return (await r.json()).result||'0x';
   } catch { return '0x'; }
 }
@@ -310,7 +311,7 @@ async function fetchPrices(addrs) {
   for (let i=0;i<needed.length;i+=30) {
     const chunk=needed.slice(i,i+30);
     try {
-      const r=await fetch(DEXSCR+chunk.join(','),{signal:withTimeout(12000)});
+      const r=await fetch(DEXSCR+chunk.join(','),{signal:withTimeout(20000)});
       const j=await r.json();
       chunk.forEach(a=>{if(priceCache[a]===undefined)priceCache[a]=0;});
       (j.pairs||[]).filter(p=>p.chainId==='pulsechain').forEach(p=>{
@@ -380,14 +381,18 @@ async function track() {
 
   try {
     // Fetch token list + transactions in parallel
-    const [tokRes, txRes, tokTxRes] = await Promise.all([
-      fetch(`${BSCOUT}/addresses/${wallet}/tokens?type=ERC-20`,{signal:withTimeout(20000)}),
-      fetch(`${BSCOUT}/addresses/${wallet}/transactions?limit=30`,{signal:withTimeout(15000)}),
-      fetch(`${BSCOUT}/addresses/${wallet}/token-transfers?limit=20`,{signal:withTimeout(15000)}),
+    let tokRes, txRes, tokTxRes;
+    try { [tokRes, txRes, tokTxRes] = await Promise.all([
+      fetch(`${BSCOUT}/addresses/${wallet}/tokens?type=ERC-20`,{signal:withTimeout(30000)}),
+      fetch(`${BSCOUT}/addresses/${wallet}/transactions?limit=30`,{signal:withTimeout(25000)}),
+      fetch(`${BSCOUT}/addresses/${wallet}/token-transfers?limit=20`,{signal:withTimeout(25000)}),
     ]);
 
     setProgress(30,'Processing tokens...');
 
+    ]) } catch(fetchErr) {
+      throw new Error('Network error fetching data: ' + fetchErr.message);
+    }
     const tokData  = tokRes.ok ? await tokRes.json() : {items:[]};
     const txData   = txRes.ok ? await txRes.json() : {items:[]};
     const tokTxData= tokTxRes.ok ? await tokTxRes.json() : {items:[]};
@@ -410,7 +415,7 @@ async function track() {
     try {
       const r=await fetch(RPC,{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_getBalance',params:[wallet,'latest']}),
-        signal:withTimeout(10000)});
+        signal:withTimeout(15000)});
       const j=await r.json();
       plsBal = parseInt(j.result||'0',16)/1e18;
     } catch {}
@@ -453,8 +458,11 @@ async function track() {
 
   } catch(e) {
     hideProgress();
-    document.getElementById('panel-balances').innerHTML = `<div class="err">⚠ ${e.message}. Please try again.</div>`;
-    console.error(e);
+    const errMsg = e.name === 'AbortError' ? 'Request timed out — please try again' : 
+                   e.message.includes('fetch') ? 'Network blocked — check browser settings' :
+                   e.message || 'Unknown error';
+    document.getElementById('panel-balances').innerHTML = `<div class="err">⚠ ${errMsg}. (${e.name})</div>`;
+    console.error('Track error:', e.name, e.message, e);
   }
   btn.disabled=false; btn.textContent='🔍 Track Wallet';
 }
